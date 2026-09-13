@@ -37,7 +37,6 @@ fi
 ../magiskboot cpio "$ramdisk" 'add 0755 system/bin/recovery system/bin/recovery'
 ../magiskboot repack ../r.img new-boot.img
 
-# Sao chép file new-boot.img vừa tạo ra thành các tên mà hệ thống có thể dùng
 cp new-boot.img recovery-patched.img
 cp new-boot.img ../recovery-patched.img
 cp new-boot.img ../r-patched.img
