@@ -8,6 +8,9 @@ on:
         required: true
         default: 'https://files.catbox.moe/(RECOMMENDED)'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
