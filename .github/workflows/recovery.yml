@@ -1,11 +1,12 @@
-name: RECOVERY
-
-on:
-  workflow_dispatch:
-    inputs:
-      RECOVERY_URL:
-        description: 'RECOVERY URL'
-        required: true
+- name: Fetch image from URL
+  env:
+    RECOVERY_URL: ${{ inputs.RECOVERY_URL }}
+  run: |
+    ls
+    pwd
+    wget -- "$RECOVERY_URL" -O recovery.img
+    file recovery.img
+    ls -lh recovery.img
         default: 'https://files.catbox.moe/(RECOMMENDED)'
 
 permissions:
