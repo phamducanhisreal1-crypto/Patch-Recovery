@@ -1,13 +1,13 @@
-- name: Fetch image from URL
-  env:
-    RECOVERY_URL: ${{ inputs.RECOVERY_URL }}
-  run: |
-    ls
-    pwd
-    wget -- "$RECOVERY_URL" -O recovery.img
-    file recovery.img
-    ls -lh recovery.img
-        default: 'https://files.catbox.moe/(RECOMMENDED)'
+
+name: Patch Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      RECOVERY_URL:
+        description: "Direct URL to recovery.img or recovery.img.lz4"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -17,40 +17,125 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Check Out
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Prepare the environment
-      run: |
-        sudo apt install git wget lz4 tar openssl python3 -y
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget \
+            lz4 \
+            file \
+            tar \
+            python3 \
+            openssl
 
-    - name: Fetch image from URL
-      run: |
-        ls
-        pwd
-        wget ${{ github.event.inputs.RECOVERY_URL }} -O recovery.img
+      - name: Download recovery
+        env:
+          RECOVERY_URL: ${{ inputs.RECOVERY_URL }}
+        run: |
+          set -euo pipefail
 
-    - name: Patch Process-1
-      run: |
-        chmod a+x script1.sh
-        chmod a+x magiskboot
-        ./script1.sh recovery.img || true
+          mkdir -p work output
 
-    - name: Patch Process-2
-      run: |
-        chmod a+x script2.sh
-        ./script2.sh || true
-        python3 avbtool extract_public_key --key phh.pem --output phh.pub.bin
-        python3 avbtool add_hash_footer --partition_name recovery --partition_size $(wc -c recovery.img |cut -f 1 -d ' ') --image recovery-patched.img --key phh.pem --algorithm SHA256_RSA4096
-        mkdir output && cd output
-        mv ../r-patched.img recovery.img
-        tar cvf fastbootd-recovery.tar recovery.img
-        md5sum -t fastbootd-recovery.tar >> fastbootd-recovery.tar
-        mv fastbootd-recovery.tar fastbootd-recovery.tar.md5
+          wget --fail \
+            --show-progress \
+            --max-redirect=10 \
+            "$RECOVERY_URL" \
+            -O work/recovery.download
 
-    - name: Upload to Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: output/*.md5
-        name: Patched-Recovery
-        tag_name: ${{ github.run_id }}
+          test -s work/recovery.download
+
+          echo "Downloaded file:"
+          file work/recovery.download
+          ls -lh work/recovery.download
+
+      - name: Detect and prepare image
+        run: |
+          set -euo pipefail
+
+          INPUT="work/recovery.download"
+          OUTPUT="recovery.img"
+
+          if lz4 -t "$INPUT" >/dev/null 2>&1; then
+            echo "LZ4 image detected"
+            lz4 -d "$INPUT" "$OUTPUT"
+          else
+            echo "Not an LZ4 stream; checking raw image"
+            cp "$INPUT" "$OUTPUT"
+          fi
+
+          test -s "$OUTPUT"
+
+          echo "Prepared image:"
+          file "$OUTPUT"
+          ls -lh "$OUTPUT"
+
+      - name: Check patch tools
+        run: |
+          set -euo pipefail
+
+          test -f magiskboot
+          test -f avbtool
+          test -f script1.sh
+          test -f script2.sh
+          test -f phh.pem
+
+          chmod +x magiskboot
+          chmod +x script1.sh
+          chmod +x script2.sh
+
+          ./magiskboot --help || true
+          python3 avbtool version
+
+      - name: Patch process 1
+        run: |
+          set -euo pipefail
+          ./script1.sh recovery.img
+
+      - name: Patch process 2
+        run: |
+          set -euo pipefail
+          ./script2.sh
+
+      - name: Validate patch output
+        run: |
+          set -euo pipefail
+
+          if [ -s recovery-patched.img ]; then
+            IMAGE="recovery-patched.img"
+          elif [ -s r-patched.img ]; then
+            IMAGE="r-patched.img"
+          else
+            echo "ERROR: No recognized patched recovery image found"
+            exit 1
+          fi
+
+          cp "$IMAGE" output/recovery.img
+
+          file output/recovery.img
+          sha256sum output/recovery.img
+
+      - name: Package for Odin
+        run: |
+          set -euo pipefail
+
+          cd output
+
+          tar -cf fastbootd-recovery.tar recovery.img
+          md5sum -t fastbootd-recovery.tar \
+            >> fastbootd-recovery.tar
+
+          mv fastbootd-recovery.tar \
+            fastbootd-recovery.tar.md5
+
+          md5sum fastbootd-recovery.tar.md5
+          ls -lh fastbootd-recovery.tar.md5
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-recovery
+          path: output/fastbootd-recovery.tar.md5
+          if-no-files-found: error
